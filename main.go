@@ -301,7 +301,7 @@ func mainLoop(ctx context.Context, cancel context.CancelFunc, p serial.Port, bac
 
 	// run backend
 	err := backend.Run(ctx)
-	if err != nil && !isPortErr(err, serial.PortClosed) && !errors.Is(err, io.EOF) {
+	if err != nil && err != ErrNoCarrier && !isPortErr(err, serial.PortClosed) {
 		return err
 	}
 
