@@ -24,9 +24,5 @@ func (b CommandBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
 	}
 
 	_, err = cmd.Process.Wait()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }

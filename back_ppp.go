@@ -32,12 +32,7 @@ func (b PPPBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
 	}()
 
 	// writes to the remote ppp server
-	err = copyPPP(conn, s)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return copyPPP(conn, s)
 }
 
 // copyPPP writes each individual PPP frame from src to dst.

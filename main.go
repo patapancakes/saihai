@@ -304,12 +304,7 @@ func mainLoop(ctx context.Context, s *ModemSession, backend Backend) error {
 	go modemStatusWatchdog(ctx, s)
 
 	// run backend
-	err := backend.Run(ctx, s)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return backend.Run(ctx, s)
 }
 
 func isPortErr(err error, code serial.PortErrorCode) bool {
