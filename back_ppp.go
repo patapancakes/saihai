@@ -19,7 +19,7 @@ func (b PPPBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
 	// TODO: maybe redundant
 	defer conn.Close()
 
-	// closes conn after b closes
+	// closes conn after s closes
 	go func() {
 		<-ctx.Done()
 		conn.Close() // force conn.Read to unblock
@@ -28,7 +28,7 @@ func (b PPPBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
 	// writes to the local ppp client
 	go func() {
 		io.Copy(s, conn)
-		s.Close() // force b.Read to unblock
+		s.Close() // force s.Read to unblock
 	}()
 
 	// writes to the remote ppp server
