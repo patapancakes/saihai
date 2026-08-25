@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -253,10 +252,14 @@ func mainLoop(ctx context.Context, s *ModemSession, backend Backend) error {
 			// BUG: serial.Port.Read timeout returns nil error
 			return err
 		}
+		if n == 0 && number != "" { // if timed out and number dialed
+			// reset timeout
+			s.SetReadTimeout(serial.NoTimeout)
+			break
+		}
 
-		// skip if not numeric
-		_, err = strconv.Atoi(string(b))
-		if err != nil {
+		// skip if not valid dialed characters
+		if !strings.ContainsAny(string(b), "0123456789#*") {
 			continue
 		}
 
@@ -267,13 +270,6 @@ func mainLoop(ctx context.Context, s *ModemSession, backend Backend) error {
 
 			// set inter digit timeout
 			s.SetReadTimeout(time.Second)
-		} else {
-			// if timed out
-			if n == 0 {
-				// reset timeout
-				s.SetReadTimeout(serial.NoTimeout)
-				break
-			}
 		}
 
 		number += string(b)
