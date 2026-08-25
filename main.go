@@ -140,7 +140,7 @@ func filterPorts(p string) bool {
 }
 
 func getModemPort(ports []string) (string, error) {
-	result := make(chan string)
+	result := make(chan string, len(ports))
 
 	for _, portName := range ports {
 		go func() {
@@ -150,25 +150,12 @@ func getModemPort(ports []string) (string, error) {
 			}
 
 			defer p.Close()
+			p.SetReadTimeout(time.Second * 3)
 
-			valid := make(chan bool)
-
-			go func() {
-				p.ResetInputBuffer()
-				resp, err := writeCommand(p, "ATZE0")
-				if err != nil || resp != "OK" {
-					valid <- false
-				}
-				valid <- true
-			}()
-
-			select {
-			case <-time.NewTimer(time.Second).C:
+			p.ResetInputBuffer()
+			resp, err := writeCommand(p, "ATZE0")
+			if err != nil || resp != "OK" {
 				return
-			case valid := <-valid:
-				if !valid {
-					return
-				}
 			}
 
 			result <- portName
