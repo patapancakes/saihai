@@ -46,7 +46,7 @@ func main() {
 	port := flag.String("port", "", "serial port identifier")
 
 	mode := flag.String("mode", "ppp", "backend mode to use (ppp, cmd)")
-	ppp := flag.String("ppp", "dcnet.flyca.st:7654", "address for ppp backend")
+	ppp := flag.String("ppp", "", "address for ppp backend")
 	cmd := flag.String("cmd", "pppd nodetach notty 192.168.0.1:192.168.0.2 ms-dns 192.168.0.1", "command for command backend")
 
 	flag.Parse()

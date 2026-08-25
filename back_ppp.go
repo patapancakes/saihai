@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"saihai/dcnet"
+	"strconv"
 )
 
 type PPPBackend struct {
@@ -11,6 +14,17 @@ type PPPBackend struct {
 }
 
 func (b PPPBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
+	// use dcnet if address unspecified
+	if b.address == "" {
+		host, err := dcnet.GetBestHost()
+		if err != nil {
+			return err
+		}
+
+		b.address = host.Address.String() + ":" + strconv.Itoa(dcnet.AccessPort)
+		fmt.Println("Using DCNet @", host.Name)
+	}
+
 	conn, err := net.Dial("tcp", b.address)
 	if err != nil {
 		return err
