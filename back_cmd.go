@@ -8,17 +8,15 @@ import (
 )
 
 type CommandBackend struct {
-	io.ReadWriteCloser
-
 	command string
 }
 
-func (b CommandBackend) Run(ctx context.Context) error {
+func (b CommandBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
 	split := strings.Split(b.command, " ")
 
 	cmd := exec.CommandContext(ctx, split[0], split[1:]...)
-	cmd.Stdin = b
-	cmd.Stdout = b
+	cmd.Stdin = s
+	cmd.Stdout = s
 
 	err := cmd.Start()
 	if err != nil {

@@ -7,12 +7,10 @@ import (
 )
 
 type PPPBackend struct {
-	io.ReadWriteCloser
-
 	address string
 }
 
-func (b PPPBackend) Run(ctx context.Context) error {
+func (b PPPBackend) Run(ctx context.Context, s io.ReadWriteCloser) error {
 	conn, err := net.Dial("tcp", b.address)
 	if err != nil {
 		return err
@@ -29,12 +27,12 @@ func (b PPPBackend) Run(ctx context.Context) error {
 
 	// writes to the local ppp client
 	go func() {
-		io.Copy(b, conn)
-		b.Close() // force b.Read to unblock
+		io.Copy(s, conn)
+		s.Close() // force b.Read to unblock
 	}()
 
 	// writes to the remote ppp server
-	err = copyPPP(conn, b)
+	err = copyPPP(conn, s)
 	if err != nil {
 		return err
 	}

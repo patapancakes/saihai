@@ -5,17 +5,17 @@ import (
 	"context"
 	"errors"
 	"io"
+
+	"go.bug.st/serial"
 )
 
 type Backend interface {
-	io.ReadWriter
-
-	Run(context.Context) error
+	Run(context.Context, io.ReadWriteCloser) error
 }
 
 type ModemSession struct {
 	context.CancelFunc
-	io.ReadWriter
+	serial.Port
 }
 
 var (
@@ -24,7 +24,7 @@ var (
 )
 
 func (s *ModemSession) Read(p []byte) (int, error) {
-	n, err := s.ReadWriter.Read(p)
+	n, err := s.Port.Read(p)
 	if bytes.HasSuffix(p[:n], noCarrier) {
 		s.Close()
 		return n, ErrNoCarrier

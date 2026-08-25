@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"slices"
 	"strconv"
@@ -74,7 +75,7 @@ func main() {
 	fmt.Println("Using", *port)
 	fmt.Println()
 
-	fmt.Println("Press [Control-C] at any time to exit")
+	fmt.Println("Press [Control-C] at any time to reset")
 	fmt.Println()
 
 	for {
@@ -92,7 +93,7 @@ func main() {
 			}
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 
 		// would use SetReadTimeout but Read can't retroactively timeout on Windows...
 		context.AfterFunc(ctx, func() { p.Close() })
@@ -101,13 +102,13 @@ func main() {
 
 		switch *mode {
 		case "cmd":
-			backend = CommandBackend{ReadWriteCloser: &ModemSession{cancel, p}, command: *cmd}
+			backend = CommandBackend{command: *cmd}
 		default: //case "ppp":
-			backend = PPPBackend{ReadWriteCloser: &ModemSession{cancel, p}, address: *ppp}
+			backend = PPPBackend{address: *ppp}
 		}
 
-		err = mainLoop(ctx, cancel, p, backend)
-		if err != nil {
+		err = mainLoop(ctx, &ModemSession{cancel, p}, backend)
+		if err != nil && err != ErrNoCarrier && !isPortErr(err, serial.PortClosed) {
 			fmt.Println("Error:", err)
 		}
 
@@ -184,37 +185,37 @@ func getModemPort(ports []string) (string, error) {
 	return "", ErrNoValidModem
 }
 
-func mainLoop(ctx context.Context, cancel context.CancelFunc, p serial.Port, backend Backend) error {
+func mainLoop(ctx context.Context, s *ModemSession, backend Backend) error {
 	// clear leftover data
-	p.ResetInputBuffer()
+	s.ResetInputBuffer()
 
 	fmt.Println("Initializing...")
 
 	// reset modem
 	// Z: reset
 	// E0: disable echo
-	writeCommand(p, "ATZE0")
+	writeCommand(s, "ATZE0")
 
 	// enter voice mode
-	writeCommand(p, "AT+FCLASS=8")
+	writeCommand(s, "AT+FCLASS=8")
 
 	// voice mode off hook
 	// 1: "DCE off-hook. DCE connected to the line."
-	writeCommand(p, "AT+VLS=1")
+	writeCommand(s, "AT+VLS=1")
 
 	// set voice codec
 	// 1: 8-bit unsigned PCM
 	// 8000: 8KHz sample rate
-	writeCommand(p, "AT+VSM=1,8000")
+	writeCommand(s, "AT+VSM=1,8000")
 
 	// start voice transmitting
 	// TODO: find out why this sometimes sends OK in addition to CONNECT
-	resp, _ := writeCommand(p, "AT+VTX")
+	resp, _ := writeCommand(s, "AT+VTX")
 	switch resp {
 	case "CONNECT":
 		break
 	case "OK":
-		if readResponse(p) != "CONNECT" {
+		if readResponse(s) != "CONNECT" {
 			return ErrUnexpected
 		}
 	default:
@@ -230,11 +231,13 @@ func mainLoop(ctx context.Context, cancel context.CancelFunc, p serial.Port, bac
 			select {
 			case <-stop:
 				return
+			case <-ctx.Done():
+				return
 			default:
 			}
 
 			// dialtone without wav header
-			_, err := p.Write(dialtone[44:])
+			_, err := s.Write(dialtone[44:])
 			if err != nil {
 				fmt.Println("Error:", err)
 				os.Exit(1)
@@ -249,7 +252,7 @@ func mainLoop(ctx context.Context, cancel context.CancelFunc, p serial.Port, bac
 
 	// wait for digits
 	for {
-		n, err := p.Read(b)
+		n, err := s.Read(b)
 		if err != nil {
 			// BUG: serial.Port.Read timeout returns nil error
 			return err
@@ -267,12 +270,12 @@ func mainLoop(ctx context.Context, cancel context.CancelFunc, p serial.Port, bac
 			close(stop)
 
 			// set inter digit timeout
-			p.SetReadTimeout(time.Second)
+			s.SetReadTimeout(time.Second)
 		} else {
 			// if timed out
 			if n == 0 {
 				// reset timeout
-				p.SetReadTimeout(serial.NoTimeout)
+				s.SetReadTimeout(serial.NoTimeout)
 				break
 			}
 		}
@@ -283,29 +286,28 @@ func mainLoop(ctx context.Context, cancel context.CancelFunc, p serial.Port, bac
 	fmt.Println("Answering...")
 
 	// stop voice transmission
-	writeCommand(p, string([]rune{DLE, ETX}))
+	writeCommand(s, string([]rune{DLE, ETX}))
 
 	// enter data mode
-	writeCommand(p, "AT+FCLASS=0")
+	writeCommand(s, "AT+FCLASS=0")
 
 	// answer
-	resp, _ = writeCommand(p, "ATA")
+	resp, _ = writeCommand(s, "ATA")
 	if !strings.HasPrefix(resp, "CONNECT") {
 		return ErrUnexpected
 	}
 
 	fmt.Println("Connected!")
+	defer fmt.Println("Disconnected.")
 
 	// start status watchdog
-	go modemStatusWatchdog(ctx, cancel, p)
+	go modemStatusWatchdog(ctx, s)
 
 	// run backend
-	err := backend.Run(ctx)
-	if err != nil && err != ErrNoCarrier && !isPortErr(err, serial.PortClosed) {
+	err := backend.Run(ctx, s)
+	if err != nil {
 		return err
 	}
-
-	fmt.Println("Disconnected.")
 
 	return nil
 }
@@ -315,7 +317,7 @@ func isPortErr(err error, code serial.PortErrorCode) bool {
 	return errors.As(err, &portErr) && portErr.Code() == code
 }
 
-func modemStatusWatchdog(ctx context.Context, cancel context.CancelFunc, p serial.Port) error {
+func modemStatusWatchdog(ctx context.Context, s *ModemSession) error {
 	// DCD returns false for a few seconds still, sleep before activating
 	time.Sleep(time.Second * 5)
 
@@ -326,13 +328,13 @@ func modemStatusWatchdog(ctx context.Context, cancel context.CancelFunc, p seria
 		default:
 		}
 
-		status, err := p.GetModemStatusBits()
+		status, err := s.GetModemStatusBits()
 		if err != nil {
 			return err
 		}
 		// check carrier detect
 		if !status.DCD {
-			cancel()
+			s.Close()
 			return nil
 		}
 	}
