@@ -237,11 +237,7 @@ func mainLoop(ctx context.Context, s *ModemSession, backend Backend) error {
 			}
 
 			// dialtone without wav header
-			_, err := s.Write(dialtone[44:])
-			if err != nil {
-				fmt.Println("Error:", err)
-				os.Exit(1)
-			}
+			s.Write(dialtone[44:])
 		}
 	}()
 
