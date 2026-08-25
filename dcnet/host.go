@@ -6,16 +6,14 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
-	"sync"
 	"time"
 )
 
 const (
-	master = "dcnet.flyca.st"
-
+	masterHost = "dcnet.flyca.st"
 	AccessPort = 7654
-
 	queryPort  = 7655
 	queryMagic = 0xDC15C001
 )
@@ -29,23 +27,25 @@ const (
 var (
 	ErrInvalidMagic   = errors.New("invalid magic")
 	ErrUnexpectedType = errors.New("unexpected type")
+	ErrInvalidIP      = errors.New("invalid ip")
 	ErrNoHostsReplied = errors.New("no hosts replied")
 )
 
 type Host struct {
-	Address net.IP
+	Address netip.Addr
 	Name    string
 }
 
 func GetHosts() ([]Host, error) {
-	conn, err := net.Dial("udp", master+":"+strconv.Itoa(queryPort))
+	conn, err := net.Dial("udp", masterHost+":"+strconv.Itoa(queryPort))
 	if err != nil {
 		return nil, err
 	}
 
 	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(time.Second * 3))
 
-	req := make([]byte, 5)
+	req := make([]byte, 4+1)
 	binary.LittleEndian.PutUint32(req, queryMagic)
 	req[4] = queryDiscover
 
@@ -53,8 +53,6 @@ func GetHosts() ([]Host, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	conn.SetReadDeadline(time.Now().Add(time.Second * 3))
 
 	resp := make([]byte, 1400)
 	n, err := conn.Read(resp)
@@ -93,6 +91,10 @@ func GetHosts() ([]Host, error) {
 
 			return nil, err
 		}
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			return nil, ErrInvalidIP
+		}
 
 		var nameLen uint8
 		err = binary.Read(r, binary.LittleEndian, &nameLen)
@@ -107,7 +109,7 @@ func GetHosts() ([]Host, error) {
 		}
 
 		hosts = append(hosts, Host{
-			Address: net.IP(ip),
+			Address: addr,
 			Name:    string(name),
 		})
 	}
@@ -116,11 +118,6 @@ func GetHosts() ([]Host, error) {
 }
 
 func GetBestHost() (Host, error) {
-	type Result struct {
-		Host Host
-		RTT  time.Duration
-	}
-
 	hosts, err := GetHosts()
 	if err != nil {
 		return Host{}, err
@@ -131,11 +128,10 @@ func GetBestHost() (Host, error) {
 	req[4] = queryPing
 	binary.LittleEndian.PutUint64(req[5:], uint64(time.Now().UnixMilli()))
 
-	results := make(chan Result, len(hosts))
+	result := make(chan Host, len(hosts))
 
-	var wg sync.WaitGroup
 	for _, host := range hosts {
-		wg.Go(func() {
+		go func() {
 			conn, err := net.Dial("udp", host.Address.String()+":"+strconv.Itoa(queryPort))
 			if err != nil {
 				return
@@ -149,35 +145,21 @@ func GetBestHost() (Host, error) {
 				return
 			}
 
-			sent := time.Now()
-
-			resp := make([]byte, 13) // doesn't really matter
+			resp := make([]byte, 4+1+8) // doesn't really matter
 			_, err = conn.Read(resp)
 			if err != nil {
 				return
 			}
 
-			results <- Result{
-				Host: host,
-				RTT:  time.Since(sent),
-			}
-		})
+			result <- host
+		}()
 	}
 
-	wg.Wait()
-	close(results)
-
-	var best Result
-	for result := range results {
-		if best.RTT != 0 && best.RTT < result.RTT {
-			continue
-		}
-
-		best = result
-	}
-	if best.Host.Name == "" {
-		return Host{}, ErrNoHostsReplied
+	select {
+	case best := <-result:
+		return best, nil
+	case <-time.NewTimer(time.Second * 3).C:
 	}
 
-	return best.Host, nil
+	return Host{}, ErrNoHostsReplied
 }
