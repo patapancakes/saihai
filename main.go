@@ -313,8 +313,8 @@ func mainLoop(ctx context.Context, s *ModemSession, backend Backend) error {
 }
 
 func isPortErr(err error, code serial.PortErrorCode) bool {
-	var portErr *serial.PortError
-	return errors.As(err, &portErr) && portErr.Code() == code
+	portErr, ok := errors.AsType[*serial.PortError](err)
+	return ok && portErr.Code() == code
 }
 
 func modemStatusWatchdog(ctx context.Context, s *ModemSession) error {
